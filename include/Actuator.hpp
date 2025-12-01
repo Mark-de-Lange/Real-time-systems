@@ -12,14 +12,7 @@ extern "C" {
 
 #include "pinConfig.hpp"
 #include "BridgeEvents.hpp"
-
-// UML: Actuator
-// - mBrug : Boolean (true = omhoog/open)
-// - mPinOutOmhoog : Integer
-// - mPinOutOmlaag : Integer
-// - mPinInOmhoog  : Integer
-// - mPinInOmlaag  : Integer
-// + Omhoog(), Omlaag(), GetActuatorPositie()
+#include "Commands.hpp"
 
 class Actuator {
 private:
@@ -31,32 +24,28 @@ private:
 
     TaskHandle_t mTask;
     QueueHandle_t mBridgeQueue;
+    QueueHandle_t mCommandQueue;
 
-    enum class Command {
-        NONE,
-        OMHOOG,
-        OMLAAG,
-        STOP
-    };
-    Command mCommand;
-
-    static void taskEntry(void* pvParameters);
-    void taskLoop();
-
-    void sendEvent(BridgeEventType eventType);
+    void taskLoop();         // NIET static!
+    void sendEvent(BridgeEventType type);
 
 public:
-    explicit Actuator(
-        int pinOutOmhoog = (int)PIN_BRUG_ACTUATOR,
-        int pinOutOmlaag = (int)PIN_BRUG_ACTUATOR,
-        int pinInOmhoog  = -1,
-        int pinInOmlaag  = -1
-    );
+    Actuator(int pinOutOmhoog,
+             int pinOutOmlaag,
+             int pinInOmhoog,
+             int pinInOmlaag);
 
     void setTaskHandle(TaskHandle_t handle) { mTask = handle; }
     void setBridgeQueue(QueueHandle_t q) { mBridgeQueue = q; }
+    QueueHandle_t getCommandQueue() const { return mCommandQueue; }
 
-    static void ActuatorTask(void* pvParameters) { taskEntry(pvParameters); }
+    // 🔥 Dit is de ENIGE FreeRTOS task entry voor de actuator
+    static void ActuatorTask(void* pvParameters) {
+        auto* self = static_cast<Actuator*>(pvParameters);
+        if (self)
+            self->taskLoop();
+        vTaskDelete(nullptr);
+    }
 
     void Omhoog();
     void Omlaag();
@@ -64,4 +53,4 @@ public:
     bool GetActuatorPositie() const;
 };
 
-#endif // ACTUATOR_HPP
+#endif

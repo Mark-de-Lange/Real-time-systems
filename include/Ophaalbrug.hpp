@@ -13,11 +13,12 @@ extern "C" {
 #include "Actuator.hpp"
 #include "VerkeersStoplicht.hpp"
 #include "BotenStoplicht.hpp"
+#include "Commands.hpp"
 
 class Ophaalbrug
 {
 private:
-    // UML-attributen (uitgebreid naar 2 stoplichten)
+    // Objecten uit UML
     Slagboom&          mSlagboom;
     VerkeersStoplicht& mVerkeersStoplicht;
     BotenStoplicht&    mBotenStoplicht;
@@ -26,11 +27,12 @@ private:
     int mMaximaleHoogte;
     int mMaximaleBreedte;
 
-    // interne dingen
     QueueHandle_t mEventQueue;
 
+    // COMPLETE state-machine
     enum class State {
         IDLE,
+        WACHT_OP_VERKEERSLICHT_ROOD,
         WACHT_OP_SLAGBOOM_DICHT,
         WACHT_OP_BRUG_OPEN,
         OPEN,
@@ -45,6 +47,9 @@ private:
     static void taskEntry(void* pvParameters);
     void taskLoop();
 
+    // De functies die jouw .cpp wél bevat:
+    void startOpenProces();
+    void startSluitProces();
     void onEvent(const BridgeEventMsg& msg);
 
 public:
@@ -55,7 +60,6 @@ public:
                int maximaleHoogte,
                int maximaleBreedte);
 
-    // voor xTaskCreate
     static void OphaalbrugTask(void* pvParameters) {
         taskEntry(pvParameters);
     }

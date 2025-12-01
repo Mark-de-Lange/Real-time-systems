@@ -1,6 +1,15 @@
 #include "Ophaalbrug.hpp"
 #include <cstdio>
 
+extern "C" {
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/queue.h"
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------------------------------------------------
+
 Ophaalbrug::Ophaalbrug(Slagboom& slagboom,
                        VerkeersStoplicht& vStop,
                        BotenStoplicht& bStop,
@@ -18,20 +27,26 @@ Ophaalbrug::Ophaalbrug(Slagboom& slagboom,
   mLaatsteSchipHoogte(0),
   mLaatsteSchipBreedte(0)
 {
-    mEventQueue = xQueueCreate(10, sizeof(BridgeEventMsg));
-    if (mEventQueue == nullptr) {
-        std::printf("[Ophaalbrug] ERROR: kon event queue niet maken!\n");
-    }
+    // Queue voor events vanuit alle componenten
+    mEventQueue = xQueueCreate(20, sizeof(BridgeEventMsg));
+    if (!mEventQueue)
+        printf("[Ophaalbrug] ERROR: kon eventqueue niet maken!\n");
 }
 
-void Ophaalbrug::taskEntry(void* pvParameters)
+// ---------------------------------------------------------------------------------------------------------------------
+// FreeRTOS Task wrapper
+// ---------------------------------------------------------------------------------------------------------------------
+
+void Ophaalbrug::taskEntry(void* pv)
 {
-    auto* self = static_cast<Ophaalbrug*>(pvParameters);
-    if (self) {
-        self->taskLoop();
-    }
+    auto* self = static_cast<Ophaalbrug*>(pv);
+    if (self) self->taskLoop();
     vTaskDelete(nullptr);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Hoofd-Task Loop — ontvangt ALLE events
+// ---------------------------------------------------------------------------------------------------------------------
 
 void Ophaalbrug::taskLoop()
 {
@@ -39,65 +54,102 @@ void Ophaalbrug::taskLoop()
 
     for (;;)
     {
-        if (xQueueReceive(mEventQueue, &msg, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(mEventQueue, &msg, portMAX_DELAY) == pdTRUE)
+        {
             onEvent(msg);
         }
     }
 }
 
-// --------- UML-operations ----------
+// ---------------------------------------------------------------------------------------------------------------------
+// Start het openproces na SCHIP_GEDETECTEERD
+// ---------------------------------------------------------------------------------------------------------------------
 
-void Ophaalbrug::openBrug()
+void Ophaalbrug::startOpenProces()
 {
-    // Check: schip moet binnen maximale maten vallen
-    if (mLaatsteSchipHoogte > mMaximaleHoogte ||
-        mLaatsteSchipBreedte > mMaximaleBreedte)
+    printf("[Ophaalbrug] Start OPEN proces...\n");
+
+    // 1. Schip past eronder → geen brug openen
+    if (mLaatsteSchipHoogte <= mMaximaleHoogte)
     {
-        std::printf("[Ophaalbrug] Schip te groot: "
-                    "hoogte=%d (max=%d), breedte=%d (max=%d). Brug blijft dicht.\n",
-                    mLaatsteSchipHoogte, mMaximaleHoogte,
-                    mLaatsteSchipBreedte, mMaximaleBreedte);
+        printf("  | Schip past onder de brug → boten GO.\n");
+        StoplichtCommandMsg sm{};
+        sm.cmd = StoplichtCommand::GROEN;
+        xQueueSend(mBotenStoplicht.getCommandQueue(), &sm, 0);
         return;
     }
 
-    std::printf("[Ophaalbrug] openBrug() gestart.\n");
+    // 2. Verkeersstoplicht naar ROOD (verkeersstoplicht doet zelf oranje + delay!)
+    {
+        StoplichtCommandMsg msg{};
+        msg.cmd = StoplichtCommand::ROOD;
+        xQueueSend(mVerkeersStoplicht.getCommandQueue(), &msg, 0);
+    }
 
-    // 1) Verkeer tegenhouden (rood verkeerslicht)
-    mVerkeersStoplicht.SetTegenhouden(true);
-
-    // 2) Slagboom sluiten
-    mSlagboom.SluitSlagboom();
-
-    mState = State::WACHT_OP_SLAGBOOM_DICHT;
+    mState = State::WACHT_OP_VERKEERSLICHT_ROOD;
 }
 
-void Ophaalbrug::sluitBrug()
+// ---------------------------------------------------------------------------------------------------------------------
+// Start sluitproces van de brug
+// ---------------------------------------------------------------------------------------------------------------------
+
+void Ophaalbrug::startSluitProces()
 {
-    std::printf("[Ophaalbrug] sluitBrug() gestart.\n");
+    printf("[Ophaalbrug] Start SLUIT proces...\n");
 
-    // 1) Boten tegenhouden (rood botenlicht)
-    mBotenStoplicht.SetTegenhouden(true);
+    // 1. Boten tegenhouden
+    {
+        StoplichtCommandMsg msg{};
+        msg.cmd = StoplichtCommand::ROOD;
+        xQueueSend(mBotenStoplicht.getCommandQueue(), &msg, 0);
+    }
 
-    // 2) Brug omlaag
-    mActuator.Omlaag();
+    // 2. Brug omlaag
+    {
+        ActuatorCommandMsg msg{};
+        msg.cmd = ActuatorCommand::OMLAAG;
+        xQueueSend(mActuator.getCommandQueue(), &msg, 0);
+    }
 
     mState = State::WACHT_OP_BRUG_DICHT;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// NOODSTOP
+// ---------------------------------------------------------------------------------------------------------------------
+
 void Ophaalbrug::noodstop()
 {
-    std::printf("[Ophaalbrug] NOODSTOP!\n");
+    printf("[Ophaalbrug] !!! NOODSTOP !!!\n");
 
-    // Alles in veilige toestand
-    mActuator.Stop();                     // vergeet niet in Actuator te maken
-    mSlagboom.SluitSlagboom();
-    mVerkeersStoplicht.SetTegenhouden(true);
-    mBotenStoplicht.SetTegenhouden(true);
+    // Brugmotor stoppen
+    {
+        ActuatorCommandMsg msg{};
+        msg.cmd = ActuatorCommand::STOP;
+        xQueueSend(mActuator.getCommandQueue(), &msg, 0);
+    }
+
+    // Slagboom sluiten
+    {
+        SlagboomCommandMsg msg{};
+        msg.cmd = SlagboomCommand::CLOSE;
+        xQueueSend(mSlagboom.getCommandQueue(), &msg, 0);
+    }
+
+    // Beide stoplichten rood
+    {
+        StoplichtCommandMsg msg{};
+        msg.cmd = StoplichtCommand::ROOD;
+        xQueueSend(mVerkeersStoplicht.getCommandQueue(), &msg, 0);
+        xQueueSend(mBotenStoplicht.getCommandQueue(),    &msg, 0);
+    }
 
     mState = State::IDLE;
 }
 
-// --------- Event-afhandeling ----------
+// ---------------------------------------------------------------------------------------------------------------------
+// Event Handler
+// ---------------------------------------------------------------------------------------------------------------------
 
 void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
 {
@@ -107,51 +159,85 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             mLaatsteSchipHoogte  = msg.schipHoogte;
             mLaatsteSchipBreedte = msg.schipBreedte;
 
-            if (mState == State::IDLE) {
-                openBrug();
+            if (mState == State::IDLE)
+                startOpenProces();
+            break;
+
+        case BridgeEventType::VERKEERSLICHT_ROOD:
+            if (mState == State::WACHT_OP_VERKEERSLICHT_ROOD)
+            {
+                printf("[Ophaalbrug] Verkeerslicht is ROOD → slagboom sluiten.\n");
+
+                SlagboomCommandMsg s{};
+                s.cmd = SlagboomCommand::CLOSE;
+                xQueueSend(mSlagboom.getCommandQueue(), &s, 0);
+
+                mState = State::WACHT_OP_SLAGBOOM_DICHT;
             }
             break;
 
         case BridgeEventType::SLAGBOOM_DICHT:
-            if (mState == State::WACHT_OP_SLAGBOOM_DICHT) {
-                std::printf("[Ophaalbrug] Slagboom is dicht, brug gaat omhoog.\n");
-                mActuator.Omhoog();
+            if (mState == State::WACHT_OP_SLAGBOOM_DICHT)
+            {
+                printf("[Ophaalbrug] Slagboom dicht → brug gaat omhoog.\n");
+
+                ActuatorCommandMsg a{};
+                a.cmd = ActuatorCommand::OMHOOG;
+                xQueueSend(mActuator.getCommandQueue(), &a, 0);
+
                 mState = State::WACHT_OP_BRUG_OPEN;
             }
             break;
 
         case BridgeEventType::BRUG_OPEN:
-            if (mState == State::WACHT_OP_BRUG_OPEN) {
-                std::printf("[Ophaalbrug] Brug is open, boten mogen door (groen).\n");
-                mBotenStoplicht.SetDoorlaat(true); // groen voor boten
+            if (mState == State::WACHT_OP_BRUG_OPEN)
+            {
+                printf("[Ophaalbrug] Brug open → boten mogen door (GROEN).\n");
+
+                StoplichtCommandMsg b{};
+                b.cmd = StoplichtCommand::GROEN;
+                xQueueSend(mBotenStoplicht.getCommandQueue(), &b, 0);
+
                 mState = State::OPEN;
             }
             break;
 
         case BridgeEventType::GEEN_WACHTENDE_SCHEPEN:
-            if (mState == State::OPEN) {
-                sluitBrug();
-            }
+            if (mState == State::OPEN)
+                startSluitProces();
             break;
 
         case BridgeEventType::BRUG_DICHT:
-            if (mState == State::WACHT_OP_BRUG_DICHT) {
-                std::printf("[Ophaalbrug] Brug is dicht, slagboom open.\n");
-                mSlagboom.OpenSlagboom();
+            if (mState == State::WACHT_OP_BRUG_DICHT)
+            {
+                printf("[Ophaalbrug] Brug dicht → slagboom openen.\n");
+
+                SlagboomCommandMsg s{};
+                s.cmd = SlagboomCommand::OPEN;
+                xQueueSend(mSlagboom.getCommandQueue(), &s, 0);
+
                 mState = State::WACHT_OP_SLAGBOOM_OPEN;
             }
             break;
 
         case BridgeEventType::SLAGBOOM_OPEN:
-            if (mState == State::WACHT_OP_SLAGBOOM_OPEN) {
-                std::printf("[Ophaalbrug] Slagboom is open, verkeer mag door (groen).\n");
-                mVerkeersStoplicht.SetDoorlaat(true); // groen voor verkeer
+            if (mState == State::WACHT_OP_SLAGBOOM_OPEN)
+            {
+                printf("[Ophaalbrug] Slagboom open → verkeer groen.\n");
+
+                StoplichtCommandMsg v{};
+                v.cmd = StoplichtCommand::GROEN;
+                xQueueSend(mVerkeersStoplicht.getCommandQueue(), &v, 0);
+
                 mState = State::IDLE;
             }
             break;
 
         case BridgeEventType::NOODSTOP:
             noodstop();
+            break;
+
+        default:
             break;
     }
 }

@@ -1,84 +1,113 @@
 #include "VerkeersStoplicht.hpp"
+#include "Commands.hpp"
 #include <cstdio>
 
+extern "C" {
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/task.h"
+    #include "freertos/queue.h"
+}
+
 VerkeersStoplicht::VerkeersStoplicht(int pinR, int pinO, int pinG)
-: mRood(false),
-  mOranje(false),
-  mGroen(false),
-  mPinR(pinR),
+: mPinR(pinR),
   mPinO(pinO),
-  mPinG(pinG)
+  mPinG(pinG),
+  mRood(false),
+  mOranje(false),
+  mGroen(true),
+  mState(State::GROEN),
+  mCommandQueue(nullptr),
+  mBridgeQueue(nullptr)
 {
-    // GPIO's als output configureren
-    gpio_config_t io_conf{};
-    io_conf.intr_type    = GPIO_INTR_DISABLE;
-    io_conf.mode         = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << mPinR) | (1ULL << mPinO) | (1ULL << mPinG);
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
-    gpio_config(&io_conf);
+    gpio_config_t cfg{};
+    cfg.intr_type    = GPIO_INTR_DISABLE;
+    cfg.mode         = GPIO_MODE_OUTPUT;
+    cfg.pin_bit_mask = (1ULL << mPinR) | (1ULL << mPinO) | (1ULL << mPinG);
+    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+    gpio_config(&cfg);
 
-    // Alles uit bij start
-    gpio_set_level((gpio_num_t)mPinR, 0);
-    gpio_set_level((gpio_num_t)mPinO, 0);
-    gpio_set_level((gpio_num_t)mPinG, 0);
+    // Start op GROEN
+    setOutputs(false, false, true);
+
+    printf("[VSL] Init op GROEN\n");
+
+    mCommandQueue = xQueueCreate(5, sizeof(StoplichtCommandMsg));
 }
 
-void VerkeersStoplicht::FaseHandler()
+void VerkeersStoplicht::setOutputs(bool rood, bool oranje, bool groen)
 {
-    // Bepaal logische kleuren op basis van mDoorlaat / mTegenhouden
-    // (zoals besproken)
-    mRood   = false;
-    mOranje = false;
-    mGroen  = false;
+    gpio_set_level((gpio_num_t)mPinR, rood);
+    gpio_set_level((gpio_num_t)mPinO, oranje);
+    gpio_set_level((gpio_num_t)mPinG, groen);
 
-    if (mTegenhouden) {
-        mRood = true;   // rood = verkeer stoppen
-    } else if (mDoorlaat) {
-        mGroen = true;  // groen = verkeer doorlaten
-    } else {
-        // "tussenfase" → oranje
-        mOranje = true;
-    }
-
-    // Nu de GPIO's zetten
-    gpio_set_level((gpio_num_t)mPinR, mRood   ? 1 : 0);
-    gpio_set_level((gpio_num_t)mPinO, mOranje ? 1 : 0);
-    gpio_set_level((gpio_num_t)mPinG, mGroen  ? 1 : 0);
-
-    std::printf("[VerkeersStoplicht] Fase: rood=%d, oranje=%d, groen=%d\n",
-                (int)mRood, (int)mOranje, (int)mGroen);
+    mRood   = rood;
+    mOranje = oranje;
+    mGroen  = groen;
 }
 
-int VerkeersStoplicht::GetFase() const
+void VerkeersStoplicht::sendEvent(BridgeEventType type)
 {
-    if (mRood)   return 0;
-    if (mOranje) return 1;
-    if (mGroen)  return 2;
-    return -1; // alles uit
+    if (!mBridgeQueue) return;
+
+    BridgeEventMsg msg{};
+    msg.type = type;
+    xQueueSend(mBridgeQueue, &msg, 0);
 }
 
-void VerkeersStoplicht::SetKleur(int kleur)
+void VerkeersStoplicht::VerkeersStoplichtTask(void* pv)
 {
-    // Maak het simpel en laat dit via de basisklasse lopen:
-    // 0 = rood  -> tegenhouden
-    // 1 = oranje-> tussenfase (geen doorlaat, geen tegenhouden)
-    // 2 = groen -> doorlaat
-    switch (kleur) {
-        case 0:
-            SetTegenhouden(true);
-            break;
-        case 2:
-            SetDoorlaat(true);
-            break;
-        case 1:
-        default:
-            // oranje: beide false -> FaseHandler zet dan oranje aan
-            mDoorlaat     = false;
-            mTegenhouden  = false;
-            if (mTask != nullptr) {
-                xTaskNotifyGive(mTask);
+    auto* self = static_cast<VerkeersStoplicht*>(pv);
+    self->taskLoop();
+    vTaskDelete(nullptr);
+}
+
+void VerkeersStoplicht::taskLoop()
+{
+    StoplichtCommandMsg cmd{};
+
+    for (;;)
+    {
+        if (xQueueReceive(mCommandQueue, &cmd, portMAX_DELAY) == pdTRUE)
+        {
+            switch (cmd.cmd)
+            {
+                case StoplichtCommand::GROEN:
+                    mState = State::GROEN;
+                    setOutputs(false, false, true);
+                    break;
+
+                case StoplichtCommand::ROOD:
+                    if (mState == State::GROEN)
+                    {
+                        // Eerst 2 sec oranje
+                        mState = State::ORANJE;
+                        setOutputs(false, true, false);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                    }
+
+                    // Dan pas rood
+                    mState = State::ROOD;
+                    setOutputs(true, false, false);
+
+                    sendEvent(BridgeEventType::VERKEERSLICHT_ROOD);
+                    break;
+
+                default:
+                    break;
             }
-            break;
+        }
     }
+}
+
+void VerkeersStoplicht::startTask(const char* name, UBaseType_t prio, uint32_t stack)
+{
+    xTaskCreate(
+        VerkeersStoplichtTask,
+        name,
+        stack,
+        this,
+        prio,
+        &mTask
+    );
 }

@@ -1,43 +1,56 @@
 #include "BotenStoplicht.hpp"
+#include "Commands.hpp"
 #include <cstdio>
+
+extern "C" {
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/task.h"
+    #include "freertos/queue.h"
+}
 
 BotenStoplicht::BotenStoplicht(int pinR, int pinG)
 : mRood(false),
   mGroen(false),
   mPinR(pinR),
-  mPinG(pinG)
+  mPinG(pinG),
+  mPrevDoorlaat(false),
+  mPrevTegenhouden(true)   // rood default
 {
-    gpio_config_t io_conf{};
-    io_conf.intr_type    = GPIO_INTR_DISABLE;
-    io_conf.mode         = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << mPinR) | (1ULL << mPinG);
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
-    gpio_config(&io_conf);
+    gpio_config_t cfg{};
+    cfg.intr_type    = GPIO_INTR_DISABLE;
+    cfg.mode         = GPIO_MODE_OUTPUT;
+    cfg.pin_bit_mask = (1ULL << mPinR) | (1ULL << mPinG);
+    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+    gpio_config(&cfg);
 
-    gpio_set_level((gpio_num_t)mPinR, 0);
+    gpio_set_level((gpio_num_t)mPinR, 1);
     gpio_set_level((gpio_num_t)mPinG, 0);
+
+    printf("[BotenStoplicht] Init R=%d G=%d\n", mPinR, mPinG);
+
+    // Maak de command-queue aan. Botenverkeer krijgt minder opdrachten
+    // dan autoverkeer; 5 items is voldoende.
+    mCommandQueue = xQueueCreate(5, sizeof(StoplichtCommandMsg));
+    if (mCommandQueue == nullptr) {
+        printf("[BotenStoplicht] ERROR: kon command queue niet maken!\n");
+    }
 }
 
 void BotenStoplicht::FaseHandler()
 {
-    // Zelfde logica: tegenhouden = rood, doorlaat = groen
     mRood  = false;
     mGroen = false;
 
-    if (mTegenhouden) {
+    if (mTegenhouden)
         mRood = true;
-    } else if (mDoorlaat) {
+    else if (mDoorlaat)
         mGroen = true;
-    } else {
-        // alles uit
-    }
 
-    gpio_set_level((gpio_num_t)mPinR, mRood  ? 1 : 0);
-    gpio_set_level((gpio_num_t)mPinG, mGroen ? 1 : 0);
+    gpio_set_level((gpio_num_t)mPinR, mRood);
+    gpio_set_level((gpio_num_t)mPinG, mGroen);
 
-    std::printf("[BotenStoplicht] Fase: rood=%d, groen=%d\n",
-                (int)mRood, (int)mGroen);
+    printf("[BotenStoplicht] Fase: rood=%d groen=%d\n", mRood, mGroen);
 }
 
 int BotenStoplicht::GetFase() const
@@ -53,10 +66,62 @@ void BotenStoplicht::SetKleur(int kleur)
     switch (kleur) {
         case 0:
             SetTegenhouden(true);
+            SetDoorlaat(false);
             break;
+
         case 1:
         default:
             SetDoorlaat(true);
+            SetTegenhouden(false);
             break;
     }
+}
+
+void BotenStoplicht::BotenStoplichtTask(void* pv)
+{
+    BotenStoplicht* self = static_cast<BotenStoplicht*>(pv);
+    StoplichtCommandMsg cmd{};
+
+    for (;;) 
+    {
+        // Wacht op een opdracht. Wanneer een bericht arriveert,
+        // stel de interne vlaggen in en roep FaseHandler aan.
+        if (self->mCommandQueue != nullptr &&
+            xQueueReceive(self->mCommandQueue, &cmd, portMAX_DELAY) == pdTRUE)
+        {
+            printf("[BotenStoplicht] Command ontvangen: %d\n", static_cast<int>(cmd.cmd));
+            switch (cmd.cmd)
+            {
+                case StoplichtCommand::ROOD:
+                    self->mDoorlaat = false;
+                    self->mTegenhouden = true;
+                    break;
+                case StoplichtCommand::GROEN:
+                    self->mDoorlaat = true;
+                    self->mTegenhouden = false;
+                    break;
+                default:
+                    break;
+            }
+
+            // Pas de kleur toe op basis van mDoorlaat/mTegenhouden
+            self->FaseHandler();
+
+            // Bewaar de laatst verwerkte toestanden (optioneel)
+            self->mPrevDoorlaat    = self->mDoorlaat;
+            self->mPrevTegenhouden = self->mTegenhouden;
+        }
+    }
+}
+
+void BotenStoplicht::startTask(const char* name, UBaseType_t prio, uint32_t stack)
+{
+    xTaskCreate(
+        BotenStoplichtTask,
+        name,
+        stack,
+        this,
+        prio,
+        &mTask
+    );
 }

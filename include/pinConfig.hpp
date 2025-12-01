@@ -5,27 +5,30 @@ extern "C" {
     #include "driver/gpio.h"
 }
 
-// Schipdetectie
-#define PIN_SCHIP_KNOP       5
-#define PIN_SCHIP_HOOGTE     35   // ADC1_CHANNEL_7
-#define PIN_SCHIP_BREEDTE    36   // ADC1_CHANNEL_0
+// Schipdetectie (ADC)
+#define PIN_SCHIP_KNOP       10
+#define PIN_SCHIP_HOOGTE     1   // ADC1_CHANNEL_0 (BESTAAT op S3)
+#define PIN_SCHIP_BREEDTE    2   // ADC1_CHANNEL_1 (BESTAAT op S3)
 
-// Slagboom (4 pinnen: 2 outputs + 2 inputs)
-#define PIN_SLAGBOOM_OUT_OMHOOG  21   // output: slagboom omhoog
-#define PIN_SLAGBOOM_OUT_OMLAAG  11   // output: slagboom omlaag
-#define PIN_SLAGBOOM_IN_OMHOOG   19   // input sensor: slagboom bereikt omhoog
-#define PIN_SLAGBOOM_IN_OMLAAG   20   // input sensor: slagboom bereikt omlaag
+// Slagboom
+#define PIN_SLAGBOOM_OUT_OMHOOG   12
+#define PIN_SLAGBOOM_OUT_OMLAAG   13
+#define PIN_SLAGBOOM_IN_OMHOOG    4
+#define PIN_SLAGBOOM_IN_OMLAAG    5
 
 // Brug-actuator
-#define PIN_BRUG_ACTUATOR    18
+#define PIN_BRUG_OUT_OMHOOG   6
+#define PIN_BRUG_OUT_OMLAAG   7
+#define PIN_BRUG_IN_OMHOOG    8
+#define PIN_BRUG_IN_OMLAAG    9
 
 // VerkeersStoplicht (auto’s)
-#define PIN_VRK_ROOD         25
-#define PIN_VRK_ORANJE       26
-#define PIN_VRK_GROEN        27
+#define PIN_VRK_ROOD         11
+#define PIN_VRK_ORANJE       14
+#define PIN_VRK_GROEN        18
 
 // BotenStoplicht
-#define PIN_BOOT_ROOD        32
-#define PIN_BOOT_GROEN       33
+#define PIN_BOOT_ROOD        46
+#define PIN_BOOT_GROEN       47
 
 #endif // PINCONFIG_HPP

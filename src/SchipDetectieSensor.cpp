@@ -1,4 +1,6 @@
 #include "SchipDetectieSensor.hpp"
+#include "BridgeEvents.hpp"
+#include "pinConfig.hpp"
 #include <cstdio>
 
 SchipDetectieSensor::SchipDetectieSensor(
@@ -13,25 +15,24 @@ SchipDetectieSensor::SchipDetectieSensor(
   mPinHoogte(pinHoogte),
   mPinBreedte(pinBreedte),
   mTaskHandle(nullptr),
-  // ESP32 mapping:
-  // GPIO35 -> ADC1_CHANNEL_7
-  // GPIO36 -> ADC1_CHANNEL_0
-  mHoogteChannel(ADC1_CHANNEL_7),
-  mBreedteChannel(ADC1_CHANNEL_0)
+  mHoogteChannel(gpioToAdcChannel(pinHoogte)),
+  mBreedteChannel(gpioToAdcChannel(pinBreedte))
 {
     // --- GPIO aanwezigheids-knop ---
     gpio_config_t io_conf{};
-    io_conf.intr_type    = GPIO_INTR_NEGEDGE;              // high -> low
+    io_conf.intr_type    = GPIO_INTR_NEGEDGE;  // high -> low
     io_conf.mode         = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = 1ULL << mPin;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en   = GPIO_PULLUP_ENABLE;             // interne pull-up
+    io_conf.pull_up_en   = GPIO_PULLUP_ENABLE; // interne pull-up
     gpio_config(&io_conf);
 
-    // ISR handler (let op: gpio_install_isr_service(0) in main!)
-    gpio_isr_handler_add(static_cast<gpio_num_t>(mPin),
-                         &SchipDetectieSensor::isrHandler,
-                         this);
+    // ISR handler (gpio_install_isr_service(0) in main!)
+    gpio_isr_handler_add(
+        static_cast<gpio_num_t>(mPin),
+        &SchipDetectieSensor::isrHandler,
+        this
+    );
 
     // --- ADC configuratie ---
     adc1_config_width(ADC_WIDTH_BIT_12);
@@ -77,15 +78,29 @@ void SchipDetectieSensor::taskLoop()
         std::printf("[SchipDetectieSensor] Wacht op notify...\n");
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
+        BridgeEventMsg msg;
+
         if (CheckSchip()) {
             std::printf("[SchipDetectieSensor] Schip gedetecteerd! "
                         "hoogte=%d, breedte=%d\n",
                         mSchipHoogte, mSchipBreedte);
-        } else {
-            std::printf("[SchipDetectieSensor] Geen schip.\n");
+
+            msg.type = BridgeEventType::SCHIP_GEDETECTEERD;
+            msg.schipHoogte = mSchipHoogte;
+            msg.schipBreedte = mSchipBreedte;
         }
+        else {
+            std::printf("[SchipDetectieSensor] Geen schip.\n");
+            msg.type = BridgeEventType::GEEN_WACHTENDE_SCHEPEN;
+            msg.schipHoogte = 0;
+            msg.schipBreedte = 0;
+        }
+
+        // ⬇⬇⬇ HIER gebeurd het ECHTE werk!
+        xQueueSend(mBridgeQueue, &msg, portMAX_DELAY);
     }
 }
+
 
 // ---------- interne helpers ----------
 
@@ -113,6 +128,24 @@ int SchipDetectieSensor::convertBreedte(int raw)
     float scale = 500.0f / 4095.0f;
     return static_cast<int>(raw * scale);
 }
+
+adc1_channel_t SchipDetectieSensor :: gpioToAdcChannel(int gpio)
+{
+    switch (gpio) {
+        case 1: return ADC1_CHANNEL_0;
+        case 2: return ADC1_CHANNEL_1;
+        case 3: return ADC1_CHANNEL_2;
+        case 4: return ADC1_CHANNEL_3;
+        case 5: return ADC1_CHANNEL_4;
+        case 6: return ADC1_CHANNEL_5;
+        case 7: return ADC1_CHANNEL_6;
+        case 8: return ADC1_CHANNEL_7;
+        case 9: return ADC1_CHANNEL_8;
+        case 10: return ADC1_CHANNEL_9;
+        default: return ADC1_CHANNEL_0;
+    }
+}
+
 
 // ---------- UML: CheckSchip() ----------
 

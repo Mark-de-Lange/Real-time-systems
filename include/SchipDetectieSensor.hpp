@@ -50,6 +50,7 @@ private:
     int  readBreedteRaw();
     int  convertHoogte(int raw);
     int  convertBreedte(int raw);
+    adc1_channel_t gpioToAdcChannel(int gpio);
 
 public:
     // «create» SchipDetectieSensor()

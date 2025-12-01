@@ -1,24 +1,37 @@
-#ifndef BRIDGE_EVENTS_HPP
-#define BRIDGE_EVENTS_HPP
+#ifndef BRIDGEEVENTS_HPP
+#define BRIDGEEVENTS_HPP
 
-#include <cstdint>
-
-// Alle soorten events die naar de Ophaalbrug gaan
 enum class BridgeEventType {
-    SCHIP_GEDETECTEERD,
-    GEEN_WACHTENDE_SCHEPEN,
-    SLAGBOOM_DICHT,
-    SLAGBOOM_OPEN,
+    NONE = 0,
+
+    // Actuator (brugmotor)
     BRUG_OPEN,
     BRUG_DICHT,
+
+    // Slagboom
+    SLAGBOOM_OPEN,
+    SLAGBOOM_DICHT,
+
+    // Verkeersstoplicht weg
+    VERKEERSLICHT_ROOD,
+
+    // Botenstoplicht
+    BOTEN_ROOD,
+    BOTEN_GROEN,
+
+    // Schipdetectie
+    SCHIP_GEDETECTEERD,
+    SCHIP_UITGEVAARD,
+    GEEN_WACHTENDE_SCHEPEN,
+
+    // Noodstop
     NOODSTOP
 };
 
-// Wat er in de queue wordt verstuurd
 struct BridgeEventMsg {
     BridgeEventType type;
-    int schipHoogte;   // alleen gebruikt bij SCHIP_GEDETECTEERD
-    int schipBreedte;  // idem
+    int schipHoogte = 0;
+    int schipBreedte = 0;
 };
 
-#endif // BRIDGE_EVENTS_HPP
+#endif

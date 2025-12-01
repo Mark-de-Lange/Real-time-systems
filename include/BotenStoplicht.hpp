@@ -4,18 +4,10 @@
 #include "Stoplicht.hpp"
 
 extern "C" {
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/queue.h"
     #include "driver/gpio.h"
 }
-
-// UML BotenStoplicht:
-// - Rood : Boolean
-// - Groen: Boolean
-// - mPinR: Integer
-// - mPinG: Integer
-// + BotenStoplicht()
-// + FaseHandler()
-// + GetFase() : Integer
-// + SetKleur(Enum)
 
 class BotenStoplicht : public Stoplicht {
 private:
@@ -25,18 +17,31 @@ private:
     int  mPinR;
     int  mPinG;
 
+    // Voor overgangsdetectie (niet essentieel zoals bij verkeer)
+    bool mPrevDoorlaat;
+    bool mPrevTegenhouden;
+
+    // Queue voor opdrachten van de Ophaalbrug. Net als bij het
+    // verkeersstoplicht wordt deze in de constructor aangemaakt en
+    // bevat ze StoplichtCommandMsg berichten.
+    QueueHandle_t mCommandQueue;
+
 protected:
     void FaseHandler() override;
 
 public:
-    // «create» BotenStoplicht()
     BotenStoplicht(int pinR, int pinG);
 
-    // 0 = rood, 1 = groen, -1 = uit
     int GetFase() const;
-
-    // 0 = rood, 1 = groen
     void SetKleur(int kleur);
+
+    // Geeft de command-queue terug zodat de Ophaalbrug opdrachten kan
+    // versturen. De queue bevat StoplichtCommandMsg structuren.
+    QueueHandle_t getCommandQueue() const { return mCommandQueue; }
+
+    // Task
+    static void BotenStoplichtTask(void* pv);
+    void startTask(const char* name, UBaseType_t prio, uint32_t stack);
 };
 
 #endif // BOTEN_STOPLICHT_HPP

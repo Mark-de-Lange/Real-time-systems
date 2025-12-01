@@ -4,6 +4,7 @@
 extern "C" {
     #include "freertos/FreeRTOS.h"
     #include "freertos/task.h"
+    #include "freertos/queue.h"
 }
 
 Slagboom::Slagboom(int pinOutOmhoog, int pinOutOmlaag, int pinInOmhoog, int pinInOmlaag)
@@ -14,7 +15,7 @@ Slagboom::Slagboom(int pinOutOmhoog, int pinOutOmlaag, int pinInOmhoog, int pinI
       mPinInOmlaag(pinInOmlaag),
       mTask(nullptr),
       mBridgeQueue(nullptr),
-      mCommand(Command::NONE)
+      mCommandQueue(nullptr)
 {
     // Configure OUTPUT pins (commands: omhoog, omlaag)
     gpio_config_t io_conf{};
@@ -38,6 +39,14 @@ Slagboom::Slagboom(int pinOutOmhoog, int pinOutOmlaag, int pinInOmhoog, int pinI
     std::printf("[Slagboom] Geïnitialiseerd met:\n"
                 "  OutOmhoog=%d, OutOmlaag=%d, InOmhoog=%d, InOmlaag=%d\n",
                 mPinOutOmhoog, mPinOutOmlaag, mPinInOmhoog, mPinInOmlaag);
+
+    // Maak de command-queue aan. Hierin komen opdrachten binnen vanuit
+    // de Ophaalbrug. De queue kan 10 berichten van het type
+    // SlagboomCommandMsg bevatten.
+    mCommandQueue = xQueueCreate(10, sizeof(SlagboomCommandMsg));
+    if (mCommandQueue == nullptr) {
+        std::printf("[Slagboom] ERROR: kon command queue niet maken!\n");
+    }
 }
 
 // Check: is the slagboom completely open (input sensor omhoog reads HIGH)?
@@ -84,22 +93,33 @@ void Slagboom::taskLoop()
     bool wasOpen = false;
     bool wasClosed = true;
 
+    SlagboomCommandMsg cmd{};
+
     for (;;)
     {
-        // Wacht kort zodat commands kunnen worden verwerkt
-        vTaskDelay(pdMS_TO_TICKS(100));  // 100ms polling interval
-
-        // Voer command uit als aanwezig
-        if (mCommand == Command::OPEN) {
-            std::printf("[Slagboom] Command OPEN: pinOutOmhoog = 1\n");
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 1);  // stuur omhoog command
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);  // zeker omlaag uit
-            mCommand = Command::NONE;
-        } else if (mCommand == Command::CLOSE) {
-            std::printf("[Slagboom] Command CLOSE: pinOutOmlaag = 1\n");
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 1);  // stuur omlaag command
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);  // zeker omhoog uit
-            mCommand = Command::NONE;
+        // Probeer een opdracht uit de queue te halen. Niet-blokkerend met
+        // een korte timeout zodat we sensoren kunnen poll'en. Als er geen
+        // opdracht is, blijft de vorige toestand behouden.
+        if (mCommandQueue != nullptr &&
+            xQueueReceive(mCommandQueue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE)
+        {
+            switch (cmd.cmd)
+            {
+                case SlagboomCommand::OPEN:
+                    std::printf("[Slagboom] Command OPEN ontvangen: pinOutOmhoog=1\n");
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 1);
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+                    break;
+                case SlagboomCommand::CLOSE:
+                    std::printf("[Slagboom] Command CLOSE ontvangen: pinOutOmlaag=1\n");
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 1);
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
+                    break;
+                case SlagboomCommand::NONE:
+                default:
+                    // geen opdracht
+                    break;
+            }
         }
 
         // Poll sensoren en stuur events als toestand verandert
@@ -110,14 +130,16 @@ void Slagboom::taskLoop()
         if (isOpen && !wasOpen) {
             std::printf("[Slagboom] Slagboom is nu OPEN (sensor InOmhoog = 1).\n");
             mSlagboom = true;
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);  // motor uit
+            // motor uit
+            gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
             sendEvent(BridgeEventType::SLAGBOOM_OPEN);
             wasOpen = true;
             wasClosed = false;
         } else if (isClosed && !wasClosed) {
             std::printf("[Slagboom] Slagboom is nu DICHT (sensor InOmlaag = 1).\n");
             mSlagboom = false;
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);  // motor uit
+            // motor uit
+            gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
             sendEvent(BridgeEventType::SLAGBOOM_DICHT);
             wasClosed = true;
             wasOpen = false;
@@ -129,14 +151,25 @@ void Slagboom::taskLoop()
 
 void Slagboom::OpenSlagboom()
 {
-    std::printf("[Slagboom] OpenSlagboom() aangeroepen.\n");
-    mCommand = Command::OPEN;
+    // Stuur een OPEN-opdracht naar de queue. De daadwerkelijke hardware
+    // wordt aangestuurd door de slagboom-task zodra de opdracht uit de
+    // queue wordt gelezen.
+    std::printf("[Slagboom] OpenSlagboom() aangeroepen, command wordt gequeued.\n");
+    SlagboomCommandMsg msg{};
+    msg.cmd = SlagboomCommand::OPEN;
+    if (mCommandQueue != nullptr) {
+        xQueueSend(mCommandQueue, &msg, 0);
+    }
 }
 
 void Slagboom::SluitSlagboom()
 {
-    std::printf("[Slagboom] SluitSlagboom() aangeroepen.\n");
-    mCommand = Command::CLOSE;
+    std::printf("[Slagboom] SluitSlagboom() aangeroepen, command wordt gequeued.\n");
+    SlagboomCommandMsg msg{};
+    msg.cmd = SlagboomCommand::CLOSE;
+    if (mCommandQueue != nullptr) {
+        xQueueSend(mCommandQueue, &msg, 0);
+    }
 }
 
 bool Slagboom::GetSlagboomPositie() const

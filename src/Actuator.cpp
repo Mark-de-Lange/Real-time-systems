@@ -4,9 +4,12 @@
 extern "C" {
     #include "freertos/FreeRTOS.h"
     #include "freertos/task.h"
+    #include "freertos/queue.h"
+    #include "driver/gpio.h"
 }
 
-Actuator::Actuator(int pinOutOmhoog, int pinOutOmlaag, int pinInOmhoog, int pinInOmlaag)
+Actuator::Actuator(int pinOutOmhoog, int pinOutOmlaag,
+                   int pinInOmhoog, int pinInOmlaag)
     : mBrug(false),
       mPinOutOmhoog(pinOutOmhoog),
       mPinOutOmlaag(pinOutOmlaag),
@@ -14,99 +17,154 @@ Actuator::Actuator(int pinOutOmhoog, int pinOutOmlaag, int pinInOmhoog, int pinI
       mPinInOmlaag(pinInOmlaag),
       mTask(nullptr),
       mBridgeQueue(nullptr),
-      mCommand(Command::NONE)
+      mCommandQueue(nullptr)
 {
-    // Configure output pins
     gpio_config_t io_conf{};
     io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << mPinOutOmhoog) | (1ULL << mPinOutOmlaag);
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&io_conf);
+    io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
 
-    gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
-    gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+    /* ---------------- OUTPUT PINS ---------------- */
+    uint64_t outputMask = 0;
+    if (mPinOutOmhoog >= 0) outputMask |= (1ULL << mPinOutOmhoog);
+    if (mPinOutOmlaag >= 0) outputMask |= (1ULL << mPinOutOmlaag);
 
-    // Configure input pins if provided
-    if (mPinInOmhoog >= 0 && mPinInOmlaag >= 0) {
-        io_conf.intr_type = GPIO_INTR_DISABLE;
+    if (outputMask) {
+        io_conf.mode = GPIO_MODE_OUTPUT;
+        io_conf.pin_bit_mask = outputMask;
+        gpio_config(&io_conf);
+
+        if (mPinOutOmhoog >= 0) gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
+        if (mPinOutOmlaag >= 0) gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+    }
+
+    /* ---------------- INPUT PINS ---------------- */
+    uint64_t inputMask = 0;
+    if (mPinInOmhoog >= 0) inputMask |= (1ULL << mPinInOmhoog);
+    if (mPinInOmlaag >= 0) inputMask |= (1ULL << mPinInOmlaag);
+
+    if (inputMask) {
         io_conf.mode = GPIO_MODE_INPUT;
-        io_conf.pin_bit_mask = (1ULL << mPinInOmhoog) | (1ULL << mPinInOmlaag);
+        io_conf.pin_bit_mask = inputMask;
         io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
-        io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+        io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
         gpio_config(&io_conf);
     }
 
-    std::printf("[Actuator] Geïnitialiseerd: OutOmhoog=%d OutOmlaag=%d InOmhoog=%d InOmlaag=%d\n",
-                mPinOutOmhoog, mPinOutOmlaag, mPinInOmhoog, mPinInOmlaag);
+    printf("[Actuator] Init: OutUp=%d OutDown=%d InUp=%d InDown=%d\n",
+           mPinOutOmhoog, mPinOutOmlaag, mPinInOmhoog, mPinInOmlaag);
+
+    /* ---------------- QUEUE AANMAKEN ---------------- */
+    mCommandQueue = xQueueCreate(10, sizeof(ActuatorCommandMsg));
+    if (!mCommandQueue) {
+        printf("[Actuator] ERROR: Command queue kon niet worden aangemaakt!\n");
+    }
 }
 
+/* ---------------- EVENT TERUGSTUREN ---------------- */
 void Actuator::sendEvent(BridgeEventType eventType)
 {
-    if (mBridgeQueue != nullptr) {
-        BridgeEventMsg msg{};
-        msg.type = eventType;
-        msg.schipHoogte = 0;
-        msg.schipBreedte = 0;
-        xQueueSend(mBridgeQueue, &msg, 0);
-    }
+    if (!mBridgeQueue) return;
+
+    BridgeEventMsg msg{};
+    msg.type = eventType;
+    msg.schipHoogte = 0;
+    msg.schipBreedte = 0;
+
+    xQueueSend(mBridgeQueue, &msg, 0);
 }
 
-void Actuator::taskEntry(void* pvParameters)
-{
-    auto* self = static_cast<Actuator*>(pvParameters);
-    if (self) {
-        self->taskLoop();
-    }
-    vTaskDelete(nullptr);
-}
-
+/* ---------------- DE ACTUELE ACTUATOR-LOOP ---------------- */
 void Actuator::taskLoop()
 {
+    ActuatorCommandMsg cmd{};
+
     for (;;)
     {
-        vTaskDelay(pdMS_TO_TICKS(100));
+        if (xQueueReceive(mCommandQueue, &cmd, portMAX_DELAY) == pdTRUE)
+        {
+            printf("[Actuator] Command: %d\n", (int)cmd.cmd);
 
-        if (mCommand == Command::OMHOOG) {
-            std::printf("[Actuator] Command OMHOOG: OutOmhoog=1\n");
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 1);
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
-            mBrug = true;
-            mCommand = Command::NONE;
-            sendEvent(BridgeEventType::BRUG_OPEN);
-        } else if (mCommand == Command::OMLAAG) {
-            std::printf("[Actuator] Command OMLAAG: OutOmlaag=1\n");
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 1);
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
-            mBrug = false;
-            mCommand = Command::NONE;
-            sendEvent(BridgeEventType::BRUG_DICHT);
-        } else if (mCommand == Command::STOP) {
-            std::printf("[Actuator] Command STOP: outputs=0\n");
-            gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
-            gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
-            mCommand = Command::NONE;
+            switch (cmd.cmd)
+            {
+                case ActuatorCommand::OMHOOG:
+                {
+                    printf("[Actuator] Brug gaat OMHOOG\n");
+
+                    // Motor aan
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 1);
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+
+                    // Wachten tot sensor omhoog HIGH wordt
+                    while (gpio_get_level((gpio_num_t)mPinInOmhoog) == 0)
+                    {
+                        vTaskDelay(pdMS_TO_TICKS(20));
+                    }
+
+                    // Motor uit
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
+
+                    mBrug = true;
+
+                    printf("[Actuator] Brug is volledig OPEN\n");
+
+                    sendEvent(BridgeEventType::BRUG_OPEN);
+                    break;
+                }
+
+                case ActuatorCommand::OMLAAG:
+                {
+                    printf("[Actuator] Brug gaat OMLAAG\n");
+
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 1);
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
+
+                    while (gpio_get_level((gpio_num_t)mPinInOmlaag) == 0)
+                    {
+                        vTaskDelay(pdMS_TO_TICKS(20));
+                    }
+
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+
+                    mBrug = false;
+
+                    printf("[Actuator] Brug is volledig DICHT\n");
+
+                    sendEvent(BridgeEventType::BRUG_DICHT);
+                    break;
+                }
+
+                case ActuatorCommand::STOP:
+                    gpio_set_level((gpio_num_t)mPinOutOmhoog, 0);
+                    gpio_set_level((gpio_num_t)mPinOutOmlaag, 0);
+                    printf("[Actuator] STOP\n");
+                    break;
+
+                case ActuatorCommand::NONE:
+                default:
+                    break;
+            }
         }
     }
 }
 
+/* ---------------- API FUNCTIES ---------------- */
 void Actuator::Omhoog()
 {
-    std::printf("[Actuator] Omhoog() aangeroepen.\n");
-    mCommand = Command::OMHOOG;
+    ActuatorCommandMsg msg{ ActuatorCommand::OMHOOG };
+    xQueueSend(mCommandQueue, &msg, 0);
 }
 
 void Actuator::Omlaag()
 {
-    std::printf("[Actuator] Omlaag() aangeroepen.\n");
-    mCommand = Command::OMLAAG;
+    ActuatorCommandMsg msg{ ActuatorCommand::OMLAAG };
+    xQueueSend(mCommandQueue, &msg, 0);
 }
 
 void Actuator::Stop()
 {
-    std::printf("[Actuator] Stop() aangeroepen.\n");
-    mCommand = Command::STOP;
+    ActuatorCommandMsg msg{ ActuatorCommand::STOP };
+    xQueueSend(mCommandQueue, &msg, 0);
 }
 
 bool Actuator::GetActuatorPositie() const

@@ -3,66 +3,29 @@
 
 Stoplicht::Stoplicht()
 : mDoorlaat(false),
-  mTegenhouden(false),
+  mTegenhouden(true),   // standaard rood
   mTask(nullptr)
 {
 }
 
-void Stoplicht::startTask(const char* name, UBaseType_t prio, uint32_t stackWords)
+void Stoplicht::SetDoorlaat(bool state)
 {
-    xTaskCreate(
-        &Stoplicht::taskEntry,
-        name,
-        stackWords,
-        this,
-        prio,
-        &mTask
-    );
-}
+    if (mDoorlaat == state)
+        return; // geen verandering → geen notify
 
-void Stoplicht::taskEntry(void* pv)
-{
-    auto* self = static_cast<Stoplicht*>(pv);
-    if (self) {
-        self->taskLoop();
-    }
-    vTaskDelete(nullptr);
-}
+    mDoorlaat = state;
 
-void Stoplicht::taskLoop()
-{
-    for (;;)
-    {
-        // Wacht tot iemand SetDoorlaat/SetTegenhouden/SetKleur heeft aangeroepen
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        // Laat de afgeleide klasse de lampjes zetten
-        FaseHandler();
-    }
-}
-
-void Stoplicht::SetDoorlaat(bool v)
-{
-    mDoorlaat = v;
-    if (v) {
-        // Doorlaten en tegenhouden tegelijk is onlogisch → tegenhouden uit
-        mTegenhouden = false;
-    }
-
-    if (mTask != nullptr) {
+    if (mTask != nullptr)
         xTaskNotifyGive(mTask);
-    }
 }
 
-void Stoplicht::SetTegenhouden(bool v)
+void Stoplicht::SetTegenhouden(bool state)
 {
-    mTegenhouden = v;
-    if (v) {
-        // Tegenhouden betekent: niet doorlaten
-        mDoorlaat = false;
-    }
+    if (mTegenhouden == state)
+        return; // geen verandering → geen notify
 
-    if (mTask != nullptr) {
+    mTegenhouden = state;
+
+    if (mTask != nullptr)
         xTaskNotifyGive(mTask);
-    }
 }

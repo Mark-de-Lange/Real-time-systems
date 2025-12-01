@@ -1,47 +1,68 @@
-#ifndef VERKEERS_STOPLICHT_HPP
-#define VERKEERS_STOPLICHT_HPP
+#ifndef VERKEERSSTOPLICHT_HPP
+#define VERKEERSSTOPLICHT_HPP
 
-#include "Stoplicht.hpp"
+#include <cstdint>
 
 extern "C" {
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/task.h"
+    #include "freertos/queue.h"
     #include "driver/gpio.h"
 }
 
-// UML VerkeersStoplicht:
-// - Rood   : Boolean
-// - Oranje : Boolean
-// - Groen  : Boolean
-// - mPinR  : Integer
-// - mPinO  : Integer
-// - mPinG  : Integer
-// + VerkeersStoplicht()
-// + FaseHandler()
-// + GetFase() : Integer
-// + SetKleur(Enum)
+#include "BridgeEvents.hpp"
+#include "Commands.hpp"
 
-class VerkeersStoplicht : public Stoplicht {
+class VerkeersStoplicht
+{
+public:
+    // De drie mogelijke toestanden van het stoplicht
+    enum class State {
+        GROEN,
+        ORANJE,
+        ROOD
+    };
+
 private:
+    // GPIO pinnen
+    int mPinR;
+    int mPinO;
+    int mPinG;
+
+    // Huidige kleurstatus
     bool mRood;
     bool mOranje;
     bool mGroen;
 
-    int  mPinR;
-    int  mPinO;
-    int  mPinG;
+    // Interne state voor logica
+    State mState;
 
-protected:
-    void FaseHandler() override;
+    // FreeRTOS
+    TaskHandle_t mTask = nullptr;
+    QueueHandle_t mCommandQueue = nullptr;     // opdrachten van Ophaalbrug
+    QueueHandle_t mBridgeQueue = nullptr;      // events terug naar Ophaalbrug
+
+    // Hulpfuncties
+    void setOutputs(bool rood, bool oranje, bool groen);
+    void sendEvent(BridgeEventType type);
+    void taskLoop();
 
 public:
-    // «create» VerkeersStoplicht()
     VerkeersStoplicht(int pinR, int pinO, int pinG);
 
-    // 0 = rood, 1 = oranje, 2 = groen, -1 = alles uit
-    int GetFase() const;
+    // Queue setter voor centrale Ophaalbrug event queue
+    void setBridgeQueue(QueueHandle_t q) { mBridgeQueue = q; }
 
-    // eenvoudige kleur-keuze:
-    // 0 = rood, 1 = oranje, 2 = groen
-    void SetKleur(int kleur);
+    // Toegang tot de command queue
+    QueueHandle_t getCommandQueue() const { return mCommandQueue; }
+
+    // Start de FreeRTOS task
+    void startTask(const char* name = "VerkeersStoplichtTask",
+                   UBaseType_t prio = 5,
+                   uint32_t stackSize = 4096);
+
+    // FreeRTOS thread wrapper
+    static void VerkeersStoplichtTask(void* pvParameters);
 };
 
-#endif // VERKEERS_STOPLICHT_HPP
+#endif // VERKEERSSTOPLICHT_HPP

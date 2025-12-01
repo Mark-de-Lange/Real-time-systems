@@ -1,44 +1,38 @@
 #ifndef STOPLICHT_HPP
 #define STOPLICHT_HPP
 
-#include <cstdint>
-
 extern "C" {
     #include "freertos/FreeRTOS.h"
     #include "freertos/task.h"
+    #include "freertos/queue.h"
 }
 
-// Basisklasse volgens UML:
-// - mDoorlaat     : Boolean
-// - mTegenhouden  : Boolean
-// + SetDoorlaat(bool)
-// + SetTegenhouden(bool)
-// + eigen FreeRTOS-task
+#include "Commands.hpp"
 
 class Stoplicht {
 protected:
-    bool          mDoorlaat;      // true = groen / doorlaten
-    bool          mTegenhouden;   // true = rood / tegenhouden
-    TaskHandle_t  mTask;          // eigen FreeRTOS-task
-
-    // FreeRTOS task entry
-    static void taskEntry(void* pv);
-    // Eigen loop: wachten op notify en dan FaseHandler() aanroepen
-    void taskLoop();
-
-    // Moet door afgeleide klassen worden geïmplementeerd:
-    virtual void FaseHandler() = 0;
+    bool mDoorlaat;           // = groen
+    bool mTegenhouden;        // = rood
+    TaskHandle_t mTask;       // wordt gezet door startTask()
+    QueueHandle_t mCommandQueue;  // command queue van Ophaalbrug
 
 public:
     Stoplicht();
     virtual ~Stoplicht() = default;
 
-    // Task starten
-    void startTask(const char* name, UBaseType_t prio, uint32_t stackWords);
+    // Deze 2 setters sturen een notify bij elke toestand-verandering
+    void SetDoorlaat(bool state);
+    void SetTegenhouden(bool state);
 
-    // UML-methodes
-    void SetDoorlaat(bool v);
-    void SetTegenhouden(bool v);
+    // Utilities
+    TaskHandle_t getTaskHandle() const { return mTask; }
+    void setTaskHandle(TaskHandle_t handle) { mTask = handle; }
+
+    void setBridgeQueue(void* q) {}  // (optioneel voor latere uitbreidingen)
+
+protected:
+    // Wordt implementiert door subklassen (zoals VerkeersStoplicht)
+    virtual void FaseHandler() = 0;
 };
 
-#endif // STOPLICHT_HPP
+#endif
