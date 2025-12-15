@@ -1,35 +1,29 @@
 #ifndef OPHAALBRUG_HPP
 #define OPHAALBRUG_HPP
 
+#include <deque>
 #include <cstdint>
 #include "BridgeEvents.hpp"
+#include "Slagboom.hpp"
+#include "VerkeersStoplicht.hpp"
+#include "BotenStoplicht.hpp"
+#include "Actuator.hpp"
 
 extern "C" {
     #include "freertos/FreeRTOS.h"
     #include "freertos/queue.h"
 }
 
-#include "Slagboom.hpp"
-#include "Actuator.hpp"
-#include "VerkeersStoplicht.hpp"
-#include "BotenStoplicht.hpp"
-#include "Commands.hpp"
+// Struct voor schip-wachtrij
+struct SchipInfo {
+    int hoogte;
+    int breedte;
+    bool brugMoetOpen;
+};
 
 class Ophaalbrug
 {
-private:
-    // Objecten uit UML
-    Slagboom&          mSlagboom;
-    VerkeersStoplicht& mVerkeersStoplicht;
-    BotenStoplicht&    mBotenStoplicht;
-    Actuator&          mActuator;
-
-    int mMaximaleHoogte;
-    int mMaximaleBreedte;
-
-    QueueHandle_t mEventQueue;
-
-    // COMPLETE state-machine
+public:
     enum class State {
         IDLE,
         WACHT_OP_VERKEERSLICHT_ROOD,
@@ -39,37 +33,54 @@ private:
         WACHT_OP_BRUG_DICHT,
         WACHT_OP_SLAGBOOM_OPEN
     };
-    State mState;
 
-    int mLaatsteSchipHoogte;
-    int mLaatsteSchipBreedte;
-
-    static void taskEntry(void* pvParameters);
-    void taskLoop();
-
-    // De functies die jouw .cpp wél bevat:
-    void startOpenProces();
-    void startSluitProces();
-    void onEvent(const BridgeEventMsg& msg);
-
-public:
     Ophaalbrug(Slagboom& slagboom,
-               VerkeersStoplicht& vStop,
-               BotenStoplicht& bStop,
+               VerkeersStoplicht& verkeersStoplicht,
+               BotenStoplicht& botenStoplicht,
                Actuator& actuator,
                int maximaleHoogte,
                int maximaleBreedte);
 
-    static void OphaalbrugTask(void* pvParameters) {
-        taskEntry(pvParameters);
-    }
-
     QueueHandle_t getEventQueue() const { return mEventQueue; }
 
-    // UML operations
-    void openBrug();
-    void sluitBrug();
+    // FreeRTOS task wrapper
+    static void OphaalbrugTask(void* pv) {
+        static_cast<Ophaalbrug*>(pv)->taskLoop();
+    }
+
+private:
+    // Hardware componenten
+    Slagboom&        mSlagboom;
+    VerkeersStoplicht& mVerkeersStoplicht;
+    BotenStoplicht&  mBotenStoplicht;
+    Actuator&        mActuator;
+
+    // Bruglimieten
+    int mMaximaleHoogte;
+    int mMaximaleBreedte;
+
+    // Brugstatus
+    State mState;
+
+    // Wachtrij met schepen
+    std::deque<SchipInfo> mSchipQueue;
+
+    // Event queue
+    QueueHandle_t mEventQueue;
+
+    // Hoofdloop
+    void taskLoop();
+    void onEvent(const BridgeEventMsg& msg);
+
+    // Brugproces
+    void startOpenProces();
+    void startSluitProces();
+
+    // Centrale beslisfunctie
+    void updateBrugEnStoplichten();
+
+    // Noodstop
     void noodstop();
 };
 
-#endif // OPHAALBRUG_HPP
+#endif

@@ -1,81 +1,71 @@
-#ifndef SCHIP_DETECTIE_SENSOR_HPP
-#define SCHIP_DETECTIE_SENSOR_HPP
+#ifndef SCHIPDETECTIESENSOR_HPP
+#define SCHIPDETECTIESENSOR_HPP
 
 #include <cstdint>
+#include "driver/gpio.h"
+#include "driver/adc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "BridgeEvents.hpp"
 
-extern "C" {
-    #include "freertos/FreeRTOS.h"
-    #include "freertos/task.h"
-    #include "driver/gpio.h"
-    #include "driver/adc.h"
-}
-
-// UML: SchipDetectieSensor
-// - mSchipAanwezig : Boolean
-// - mSchipHoogte   : Integer
-// - mSchipBreedte  : Integer
-// - mPin           : Integer  (aanwezigheidsdetectie)
-// Extra:
-// - mPinHoogte, mPinBreedte voor hoogte/breedte meting
-// Logica:
-// - Een eigen FreeRTOS-task per object
-// - ISR triggert notify naar die task
 class SchipDetectieSensor
 {
+public:
+    SchipDetectieSensor(int pinAanwezig,
+                        int pinAfmelden,
+                        int pinHoogte,
+                        int pinBreedte);
+
+    static void SchipDetectieTask(void* pv) {
+        static_cast<SchipDetectieSensor*>(pv)->taskLoop();
+    }
+
+    void setTaskHandle(TaskHandle_t h) { mTaskHandle = h; }
+    void setBridgeQueue(QueueHandle_t q) { mBridgeQueue = q; }
+
 private:
-    bool            mSchipAanwezig;
-    int             mSchipHoogte;
-    int             mSchipBreedte;
+    enum class SensorEvent {
+        NONE,
+        AANWEZIG,
+        AFMELD
+    };
 
-    int             mPin;          // aanwezigheids-detectie (bijv. GPIO 5)
-    int             mPinHoogte;    // hoogte-sensor (bijv. GPIO 35)
-    int             mPinBreedte;   // breedte-sensor (bijv. GPIO 36)
+    // --- ORDER FIXED BELOW ---
+    int mPinAanwezig;
+    int mPinAfmelden;
+    int mPinHoogte;
+    int mPinBreedte;
 
-    TaskHandle_t    mTaskHandle;   // FreeRTOS taak van deze sensor
-    QueueHandle_t   mBridgeQueue;  // queue naar Ophaalbrug
+    adc1_channel_t mHoogteChannel;
+    adc1_channel_t mBreedteChannel;
 
-    adc1_channel_t  mHoogteChannel;
-    adc1_channel_t  mBreedteChannel;
+    bool mSchipAanwezig;
+    int  mSchipHoogte;
+    int  mSchipBreedte;
 
-    // ISR voor aanwezigheids-pin
-    static void IRAM_ATTR isrHandler(void* arg);
-    void IRAM_ATTR onInterrupt();
+    TaskHandle_t   mTaskHandle;
+    QueueHandle_t  mBridgeQueue;
 
-    // Task entry + echte loop
-    static void taskEntry(void* pvParameters);
+    volatile SensorEvent mLastEvent;
+
+    // ISR handlers
+    static void IRAM_ATTR aanwezigISR(void* arg);
+    static void IRAM_ATTR afmeldISR(void* arg);
+
+    void IRAM_ATTR onAanwezigInterrupt();
+    void IRAM_ATTR onAfmeldInterrupt();
+
+    // Task loop
     void taskLoop();
 
-    // interne helpers
+    // Helpers
+    bool CheckSchip();
     int  readHoogteRaw();
     int  readBreedteRaw();
     int  convertHoogte(int raw);
     int  convertBreedte(int raw);
     adc1_channel_t gpioToAdcChannel(int gpio);
-
-public:
-    // «create» SchipDetectieSensor()
-    explicit SchipDetectieSensor(
-        int pinAanwezig = 5,
-        int pinHoogte   = 35,
-        int pinBreedte  = 36
-    );
-
-    // Wordt aangeroepen vanuit main ná xTaskCreate
-    void setTaskHandle(TaskHandle_t handle) { mTaskHandle = handle; }
-    void setBridgeQueue(QueueHandle_t q) { mBridgeQueue = q; }
-
-    // Functie die je in main aan xTaskCreate geeft
-    static void SchipDetectieTask(void* pvParameters) {
-        taskEntry(pvParameters);
-    }
-
-    // UML: CheckSchip() : Boolean
-    bool CheckSchip();
-
-    // getters volgens UML
-    bool isSchipAanwezig() const { return mSchipAanwezig; }
-    int  getSchipHoogte()  const { return mSchipHoogte; }
-    int  getSchipBreedte() const { return mSchipBreedte; }
 };
 
-#endif // SCHIP_DETECTIE_SENSOR_HPP
+#endif

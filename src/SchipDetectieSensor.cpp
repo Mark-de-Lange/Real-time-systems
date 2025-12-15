@@ -1,108 +1,186 @@
 #include "SchipDetectieSensor.hpp"
-#include "BridgeEvents.hpp"
-#include "pinConfig.hpp"
 #include <cstdio>
 
 SchipDetectieSensor::SchipDetectieSensor(
     int pinAanwezig,
+    int pinAfmelden,
     int pinHoogte,
     int pinBreedte
 )
-: mSchipAanwezig(false),
-  mSchipHoogte(0),
-  mSchipBreedte(0),
-  mPin(pinAanwezig),
+: mPinAanwezig(pinAanwezig),
+  mPinAfmelden(pinAfmelden),
   mPinHoogte(pinHoogte),
   mPinBreedte(pinBreedte),
-  mTaskHandle(nullptr),
   mHoogteChannel(gpioToAdcChannel(pinHoogte)),
-  mBreedteChannel(gpioToAdcChannel(pinBreedte))
+  mBreedteChannel(gpioToAdcChannel(pinBreedte)),
+  mSchipAanwezig(false),
+  mSchipHoogte(0),
+  mSchipBreedte(0),
+  mTaskHandle(nullptr),
+  mBridgeQueue(nullptr),
+  mLastEvent(SensorEvent::NONE)
 {
-    // --- GPIO aanwezigheids-knop ---
-    gpio_config_t io_conf{};
-    io_conf.intr_type    = GPIO_INTR_NEGEDGE;  // high -> low
-    io_conf.mode         = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = 1ULL << mPin;
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en   = GPIO_PULLUP_ENABLE; // interne pull-up
-    gpio_config(&io_conf);
+    // -------------------------------------------------------------------------
+    // Configureer AANWEZIG knop (falling edge)
+    // -------------------------------------------------------------------------
+    gpio_config_t io{};
+    io.intr_type    = GPIO_INTR_NEGEDGE;
+    io.mode         = GPIO_MODE_INPUT;
+    io.pin_bit_mask = 1ULL << mPinAanwezig;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io.pull_up_en   = GPIO_PULLUP_ENABLE;
+    gpio_config(&io);
 
-    // ISR handler (gpio_install_isr_service(0) in main!)
+    // ISR → aanwezigISR()
     gpio_isr_handler_add(
-        static_cast<gpio_num_t>(mPin),
-        &SchipDetectieSensor::isrHandler,
+        static_cast<gpio_num_t>(mPinAanwezig),
+        &SchipDetectieSensor::aanwezigISR,
         this
     );
 
-    // --- ADC configuratie ---
+    // -------------------------------------------------------------------------
+    // Configureer AFMELD knop (falling edge)
+    // -------------------------------------------------------------------------
+    gpio_config_t io2{};
+    io2.intr_type    = GPIO_INTR_NEGEDGE;
+    io2.mode         = GPIO_MODE_INPUT;
+    io2.pin_bit_mask = 1ULL << mPinAfmelden;
+    io2.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io2.pull_up_en   = GPIO_PULLUP_ENABLE;
+    gpio_config(&io2);
+
+    gpio_isr_handler_add(
+        static_cast<gpio_num_t>(mPinAfmelden),
+        &SchipDetectieSensor::afmeldISR,
+        this
+    );
+
+    // -------------------------------------------------------------------------
+    // ADC configuratie
+    // -------------------------------------------------------------------------
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(mHoogteChannel,  ADC_ATTEN_DB_11);
     adc1_config_channel_atten(mBreedteChannel, ADC_ATTEN_DB_11);
 }
 
-// ---------- ISR ----------
+// ============================================================================
+// ISR IMPLEMENTATIES
+// ============================================================================
 
-void IRAM_ATTR SchipDetectieSensor::isrHandler(void* arg)
+void IRAM_ATTR SchipDetectieSensor::aanwezigISR(void* arg)
 {
     auto* self = static_cast<SchipDetectieSensor*>(arg);
-    if (self) {
-        self->onInterrupt();
-    }
+    if (self) self->onAanwezigInterrupt();
 }
 
-void IRAM_ATTR SchipDetectieSensor::onInterrupt()
+void IRAM_ATTR SchipDetectieSensor::afmeldISR(void* arg)
 {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    if (mTaskHandle != nullptr) {
-        vTaskNotifyGiveFromISR(mTaskHandle, &xHigherPriorityTaskWoken);
-        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-    }
+    auto* self = static_cast<SchipDetectieSensor*>(arg);
+    if (self) self->onAfmeldInterrupt();
 }
 
-// ---------- Task ----------
-
-void SchipDetectieSensor::taskEntry(void* pvParameters)
+void IRAM_ATTR SchipDetectieSensor::onAanwezigInterrupt()
 {
-    auto* self = static_cast<SchipDetectieSensor*>(pvParameters);
-    if (self) {
-        self->taskLoop();
-    }
-    vTaskDelete(nullptr);
+    if (!mTaskHandle) return;
+
+    mLastEvent = SensorEvent::AANWEZIG;
+
+    BaseType_t w = pdFALSE;
+    vTaskNotifyGiveFromISR(mTaskHandle, &w);
+    portYIELD_FROM_ISR(w);
 }
+
+void IRAM_ATTR SchipDetectieSensor::onAfmeldInterrupt()
+{
+    if (!mTaskHandle) return;
+
+    mLastEvent = SensorEvent::AFMELD;
+
+    BaseType_t w = pdFALSE;
+    vTaskNotifyGiveFromISR(mTaskHandle, &w);
+    portYIELD_FROM_ISR(w);
+}
+
+// ============================================================================
+// TASK LOOP
+// ============================================================================
 
 void SchipDetectieSensor::taskLoop()
 {
     for (;;)
     {
-        std::printf("[SchipDetectieSensor] Wacht op notify...\n");
+        std::printf("[SchipDetectieSensor] Wacht op ISR notify...\n");
+
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        BridgeEventMsg msg;
+        // -------- AANWEZIG ----------
+        if (mLastEvent == SensorEvent::AANWEZIG)
+        {
+            bool schip = CheckSchip();
 
-        if (CheckSchip()) {
-            std::printf("[SchipDetectieSensor] Schip gedetecteerd! "
-                        "hoogte=%d, breedte=%d\n",
+            BridgeEventMsg msg{};
+            msg.schipHoogte  = mSchipHoogte;
+            msg.schipBreedte = mSchipBreedte;
+
+            if (schip)
+            {
+                printf("[SchipDetectieSensor] Schip gedetecteerd: H=%d B=%d\n",
                         mSchipHoogte, mSchipBreedte);
 
-            msg.type = BridgeEventType::SCHIP_GEDETECTEERD;
-            msg.schipHoogte = mSchipHoogte;
-            msg.schipBreedte = mSchipBreedte;
-        }
-        else {
-            std::printf("[SchipDetectieSensor] Geen schip.\n");
-            msg.type = BridgeEventType::GEEN_WACHTENDE_SCHEPEN;
-            msg.schipHoogte = 0;
-            msg.schipBreedte = 0;
+                msg.type = BridgeEventType::SCHIP_GEDETECTEERD;
+            }
+            else
+            {
+                printf("[SchipDetectieSensor] Geen schip aanwezig.\n");
+
+                msg.type = BridgeEventType::GEEN_WACHTENDE_SCHEPEN;
+            }
+
+            xQueueSend(mBridgeQueue, &msg, 0);
         }
 
-        // ⬇⬇⬇ HIER gebeurd het ECHTE werk!
-        xQueueSend(mBridgeQueue, &msg, portMAX_DELAY);
+        // -------- AFMELDEN ----------
+        else if (mLastEvent == SensorEvent::AFMELD)
+        {
+            printf("[SchipDetectieSensor] Afmeldknop ISR → schip afmelden.\n");
+
+            BridgeEventMsg msg{};
+            msg.type = BridgeEventType::SCHIP_AFGEMELD;
+            msg.schipHoogte = 0;
+            msg.schipBreedte = 0;
+
+            xQueueSend(mBridgeQueue, &msg, 0);
+        }
+
+        mLastEvent = SensorEvent::NONE;
     }
 }
 
+// ============================================================================
+// HELPER FUNCTIES
+// ============================================================================
 
-// ---------- interne helpers ----------
+bool SchipDetectieSensor::CheckSchip()
+{
+    int level = gpio_get_level(static_cast<gpio_num_t>(mPinAanwezig));
+    mSchipAanwezig = (level == 0);
+
+    if (mSchipAanwezig)
+    {
+        int rawH = readHoogteRaw();
+        int rawB = readBreedteRaw();
+
+        mSchipHoogte  = convertHoogte(rawH);
+        mSchipBreedte = convertBreedte(rawB);
+    }
+    else
+    {
+        mSchipHoogte = 0;
+        mSchipBreedte = 0;
+    }
+
+    return mSchipAanwezig;
+}
 
 int SchipDetectieSensor::readHoogteRaw()
 {
@@ -114,22 +192,17 @@ int SchipDetectieSensor::readBreedteRaw()
     return adc1_get_raw(mBreedteChannel);
 }
 
-// hier komt later je echte kalibratie
 int SchipDetectieSensor::convertHoogte(int raw)
 {
-    // voorbeeld: 0..4095 -> 0..300 cm
-    float scale = 300.0f / 4095.0f;
-    return static_cast<int>(raw * scale);
+    return static_cast<int>((raw * 300.0f) / 4095.0f);
 }
 
 int SchipDetectieSensor::convertBreedte(int raw)
 {
-    // voorbeeld: 0..4095 -> 0..500 cm
-    float scale = 500.0f / 4095.0f;
-    return static_cast<int>(raw * scale);
+    return static_cast<int>((raw * 500.0f) / 4095.0f);
 }
 
-adc1_channel_t SchipDetectieSensor :: gpioToAdcChannel(int gpio)
+adc1_channel_t SchipDetectieSensor::gpioToAdcChannel(int gpio)
 {
     switch (gpio) {
         case 1: return ADC1_CHANNEL_0;
@@ -141,29 +214,7 @@ adc1_channel_t SchipDetectieSensor :: gpioToAdcChannel(int gpio)
         case 7: return ADC1_CHANNEL_6;
         case 8: return ADC1_CHANNEL_7;
         case 9: return ADC1_CHANNEL_8;
-        case 10: return ADC1_CHANNEL_9;
-        default: return ADC1_CHANNEL_0;
+        case 10:return ADC1_CHANNEL_9;
+        default:return ADC1_CHANNEL_0;
     }
-}
-
-
-// ---------- UML: CheckSchip() ----------
-
-bool SchipDetectieSensor::CheckSchip()
-{
-    int level = gpio_get_level(static_cast<gpio_num_t>(mPin));
-    mSchipAanwezig = (level == 0);   // actief laag (knop naar GND)
-
-    if (mSchipAanwezig) {
-        int rawH = readHoogteRaw();
-        int rawB = readBreedteRaw();
-
-        mSchipHoogte  = convertHoogte(rawH);
-        mSchipBreedte = convertBreedte(rawB);
-    } else {
-        mSchipHoogte  = 0;
-        mSchipBreedte = 0;
-    }
-
-    return mSchipAanwezig;
 }
