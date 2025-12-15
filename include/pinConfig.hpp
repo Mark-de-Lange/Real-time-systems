@@ -10,8 +10,11 @@ extern "C" {
 #define PIN_SCHIP_HOOGTE     1
 #define PIN_SCHIP_BREEDTE    2
 
-// Afmeldknop via ISR (falling edge)
+// Afmeldknop
 #define PIN_SCHIP_AFMELDEN   15
+
+// Noodstop
+#define PIN_NOODSTOP 17
 
 // Slagboom
 #define PIN_SLAGBOOM_OUT_OMHOOG   12

@@ -17,13 +17,9 @@ private:
     int  mPinR;
     int  mPinG;
 
-    // Voor overgangsdetectie (niet essentieel zoals bij verkeer)
     bool mPrevDoorlaat;
     bool mPrevTegenhouden;
 
-    // Queue voor opdrachten van de Ophaalbrug. Net als bij het
-    // verkeersstoplicht wordt deze in de constructor aangemaakt en
-    // bevat ze StoplichtCommandMsg berichten.
     QueueHandle_t mCommandQueue;
 
 protected:
@@ -35,8 +31,6 @@ public:
     int GetFase() const;
     void SetKleur(int kleur);
 
-    // Geeft de command-queue terug zodat de Ophaalbrug opdrachten kan
-    // versturen. De queue bevat StoplichtCommandMsg structuren.
     QueueHandle_t getCommandQueue() const { return mCommandQueue; }
 
     // Task

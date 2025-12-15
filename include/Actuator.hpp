@@ -5,31 +5,23 @@
 
 extern "C" {
     #include "freertos/FreeRTOS.h"
-    #include "freertos/queue.h"
     #include "freertos/task.h"
+    #include "freertos/queue.h"
+    #include "freertos/timers.h"
     #include "driver/gpio.h"
 }
 
-#include "pinConfig.hpp"
 #include "BridgeEvents.hpp"
 #include "Commands.hpp"
 
 class Actuator {
-private:
-    bool mBrug;
-    int  mPinOutOmhoog;
-    int  mPinOutOmlaag;
-    int  mPinInOmhoog;
-    int  mPinInOmlaag;
-
-    TaskHandle_t mTask;
-    QueueHandle_t mBridgeQueue;
-    QueueHandle_t mCommandQueue;
-
-    void taskLoop();         // NIET static!
-    void sendEvent(BridgeEventType type);
-
 public:
+    enum class State {
+        IDLE,
+        OMHOOG,
+        OMLAAG
+    };
+
     Actuator(int pinOutOmhoog,
              int pinOutOmlaag,
              int pinInOmhoog,
@@ -39,8 +31,8 @@ public:
     void setBridgeQueue(QueueHandle_t q) { mBridgeQueue = q; }
     QueueHandle_t getCommandQueue() const { return mCommandQueue; }
 
-    // 🔥 Dit is de ENIGE FreeRTOS task entry voor de actuator
-    static void ActuatorTask(void* pvParameters) {
+    static void ActuatorTask(void* pvParameters)
+    {
         auto* self = static_cast<Actuator*>(pvParameters);
         if (self)
             self->taskLoop();
@@ -51,6 +43,31 @@ public:
     void Omlaag();
     void Stop();
     bool GetActuatorPositie() const;
+
+private:
+    // toestand
+    State mState;
+    bool  mBrug;
+
+    // hardware
+    int mPinOutOmhoog;
+    int mPinOutOmlaag;
+    int mPinInOmhoog;
+    int mPinInOmlaag;
+
+    // RTOS
+    TaskHandle_t  mTask;
+    QueueHandle_t mBridgeQueue;
+    QueueHandle_t mCommandQueue;
+
+    // timeout
+    TimerHandle_t mTimeoutTimer;
+    static void timeoutCallback(TimerHandle_t timer);
+    void startTimeout();
+    void stopTimeout();
+
+    void taskLoop();
+    void sendEvent(BridgeEventType type);
 };
 
 #endif

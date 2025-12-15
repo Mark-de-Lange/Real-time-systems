@@ -31,7 +31,8 @@ public:
         WACHT_OP_BRUG_OPEN,
         OPEN,
         WACHT_OP_BRUG_DICHT,
-        WACHT_OP_SLAGBOOM_OPEN
+        WACHT_OP_SLAGBOOM_OPEN,
+        NOODSTOP,
     };
 
     Ophaalbrug(Slagboom& slagboom,

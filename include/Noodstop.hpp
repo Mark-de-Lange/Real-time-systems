@@ -1,19 +1,21 @@
-#ifndef NOODSTOP_HPP
-#define NOODSTOP_HPP
+#pragma once
 
-using namespace std;
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "driver/gpio.h"
+
+// Forward declaration
+struct BridgeEventMsg;
 
 class Noodstop {
-private:
-    bool mSignaal;
-    int mPort;
-    int mPin;
-
 public:
-    Noodstop();
-    
-    void SetSignaalNoodstop();
-    bool GetSignaalNoodstop();
-};
+    explicit Noodstop(int pin);
 
-#endif
+    void setBridgeQueue(QueueHandle_t queue);
+
+private:
+    static void IRAM_ATTR isrHandler(void* arg);
+
+    gpio_num_t   mPin;
+    QueueHandle_t mBridgeQueue{nullptr};
+};

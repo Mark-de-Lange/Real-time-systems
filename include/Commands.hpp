@@ -1,9 +1,7 @@
 #ifndef COMMANDS_HPP
 #define COMMANDS_HPP
 
-// ---------------------------------------------------------------------
-// Uniform stoplicht commando — geldend voor ALLE stoplichten
-// ---------------------------------------------------------------------
+// stoplicht commando
 enum class StoplichtCommand {
     NONE = 0,
     GROEN,
@@ -16,9 +14,7 @@ struct StoplichtCommandMsg {
     StoplichtCommand cmd;
 };
 
-// ---------------------------------------------------------------------
 // Actuator (brugmotor)
-// ---------------------------------------------------------------------
 enum class ActuatorCommand {
     NONE = 0,
     OMHOOG,
@@ -30,12 +26,11 @@ struct ActuatorCommandMsg {
     ActuatorCommand cmd;
 };
 
-// ---------------------------------------------------------------------
 // Slagboom
-// ---------------------------------------------------------------------
 enum class SlagboomCommand {
     NONE = 0,
     OPEN,
+    STOP,
     CLOSE
 };
 

@@ -14,20 +14,20 @@ extern "C" {
 #include "VerkeersStoplicht.hpp"
 #include "BotenStoplicht.hpp"
 #include "pinConfig.hpp"
+#include "Noodstop.hpp"
 
 extern "C" void app_main(void)
 {
-    // ------------------------------------------------------------
-    // 1. ISR service MOET als eerste worden geïnstalleerd
-    // ------------------------------------------------------------
+
+    // ISR service MOET als eerste worden geïnstalleerd
     gpio_install_isr_service(0);
 
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // ------------------------------------------------------------
-    // 2. Hardware componenten aanmaken
-    // ------------------------------------------------------------
 
+    // Hardware componenten aanmaken
+    static Noodstop noodstop(PIN_NOODSTOP);
+    
     static Slagboom slagboom(
         PIN_SLAGBOOM_OUT_OMHOOG,
         PIN_SLAGBOOM_OUT_OMLAAG,
@@ -57,21 +57,18 @@ extern "C" void app_main(void)
         MAX_BREEDTE
     );
 
-    // ------------------------------------------------------------
-    // 3. Schipdetectiesensor met AANMELD + AFMELD ISR
-    // ------------------------------------------------------------
+    // Schipdetectiesensor met AANMELD + AFMELD ISR
     static SchipDetectieSensor sensor(
-        PIN_SCHIP_KNOP,       // Aanmelden knop
-        PIN_SCHIP_AFMELDEN,   // Afmelden knop
-        PIN_SCHIP_HOOGTE,     // ADC hoogte
-        PIN_SCHIP_BREEDTE     // ADC breedte
+        PIN_SCHIP_KNOP,
+        PIN_SCHIP_AFMELDEN,
+        PIN_SCHIP_HOOGTE,
+        PIN_SCHIP_BREEDTE
     );
 
     sensor.setBridgeQueue(brug.getEventQueue());
+    noodstop.setBridgeQueue(brug.getEventQueue());
 
-    // ------------------------------------------------------------
-    // 4. Tasks starten
-    // ------------------------------------------------------------
+    // Tasks starten
     xTaskCreate(&Ophaalbrug::OphaalbrugTask, "brugTask", 4096, &brug, 5, nullptr);
 
     TaskHandle_t sensH;

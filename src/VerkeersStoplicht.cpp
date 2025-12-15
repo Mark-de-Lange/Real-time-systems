@@ -27,8 +27,7 @@ VerkeersStoplicht::VerkeersStoplicht(int pinR, int pinO, int pinG)
     cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
     gpio_config(&cfg);
 
-    // Start op GROEN
-    setOutputs(false, false, true);
+    setOutputs(false, false, true);// Start op GROEN
 
     printf("[VSL] Init op GROEN\n");
 
