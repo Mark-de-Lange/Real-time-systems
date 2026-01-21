@@ -31,7 +31,6 @@ private:
         AFMELD
     };
 
-    // --- ORDER FIXED BELOW ---
     int mPinAanwezig;
     int mPinAfmelden;
     int mPinHoogte;

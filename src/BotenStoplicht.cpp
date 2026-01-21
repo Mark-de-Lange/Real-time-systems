@@ -14,7 +14,7 @@ BotenStoplicht::BotenStoplicht(int pinR, int pinG)
   mPinR(pinR),
   mPinG(pinG),
   mPrevDoorlaat(false),
-  mPrevTegenhouden(true)   // rood default
+  mPrevTegenhouden(true)
 {
     gpio_config_t cfg{};
     cfg.intr_type    = GPIO_INTR_DISABLE;
@@ -29,8 +29,6 @@ BotenStoplicht::BotenStoplicht(int pinR, int pinG)
 
     printf("[BotenStoplicht] Init R=%d G=%d\n", mPinR, mPinG);
 
-    // Maak de command-queue aan. Botenverkeer krijgt minder opdrachten
-    // dan autoverkeer; 5 items is voldoende.
     mCommandQueue = xQueueCreate(5, sizeof(StoplichtCommandMsg));
     if (mCommandQueue == nullptr) {
         printf("[BotenStoplicht] ERROR: kon command queue niet maken!\n");
@@ -84,8 +82,7 @@ void BotenStoplicht::BotenStoplichtTask(void* pv)
 
     for (;;) 
     {
-        // Wacht op een opdracht. Wanneer een bericht arriveert,
-        // stel de interne vlaggen in en roep FaseHandler aan.
+
         if (self->mCommandQueue != nullptr &&
             xQueueReceive(self->mCommandQueue, &cmd, portMAX_DELAY) == pdTRUE)
         {
@@ -104,10 +101,8 @@ void BotenStoplicht::BotenStoplichtTask(void* pv)
                     break;
             }
 
-            // Pas de kleur toe op basis van mDoorlaat/mTegenhouden
             self->FaseHandler();
 
-            // Bewaar de laatst verwerkte toestanden (optioneel)
             self->mPrevDoorlaat    = self->mDoorlaat;
             self->mPrevTegenhouden = self->mTegenhouden;
         }

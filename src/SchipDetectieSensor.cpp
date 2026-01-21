@@ -20,9 +20,7 @@ SchipDetectieSensor::SchipDetectieSensor(
   mBridgeQueue(nullptr),
   mLastEvent(SensorEvent::NONE)
 {
-    // -------------------------------------------------------------------------
     // Configureer AANWEZIG knop (falling edge)
-    // -------------------------------------------------------------------------
     gpio_config_t io{};
     io.intr_type    = GPIO_INTR_NEGEDGE;
     io.mode         = GPIO_MODE_INPUT;
@@ -38,9 +36,7 @@ SchipDetectieSensor::SchipDetectieSensor(
         this
     );
 
-    // -------------------------------------------------------------------------
     // Configureer AFMELD knop (falling edge)
-    // -------------------------------------------------------------------------
     gpio_config_t io2{};
     io2.intr_type    = GPIO_INTR_NEGEDGE;
     io2.mode         = GPIO_MODE_INPUT;
@@ -54,19 +50,14 @@ SchipDetectieSensor::SchipDetectieSensor(
         &SchipDetectieSensor::afmeldISR,
         this
     );
-
-    // -------------------------------------------------------------------------
-    // ADC configuratie
-    // -------------------------------------------------------------------------
+    
+    // ADC configuratie    
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(mHoogteChannel,  ADC_ATTEN_DB_11);
     adc1_config_channel_atten(mBreedteChannel, ADC_ATTEN_DB_11);
 }
 
-// ============================================================================
 // ISR IMPLEMENTATIES
-// ============================================================================
-
 void IRAM_ATTR SchipDetectieSensor::aanwezigISR(void* arg)
 {
     auto* self = static_cast<SchipDetectieSensor*>(arg);
@@ -101,10 +92,7 @@ void IRAM_ATTR SchipDetectieSensor::onAfmeldInterrupt()
     portYIELD_FROM_ISR(w);
 }
 
-// ============================================================================
 // TASK LOOP
-// ============================================================================
-
 void SchipDetectieSensor::taskLoop()
 {
     for (;;)
@@ -139,7 +127,7 @@ void SchipDetectieSensor::taskLoop()
             xQueueSend(mBridgeQueue, &msg, 0);
         }
 
-        // -------- AFMELDEN ----------
+        // AFMELDEN
         else if (mLastEvent == SensorEvent::AFMELD)
         {
             printf("[SchipDetectieSensor] Afmeldknop ISR → schip afmelden.\n");
@@ -156,10 +144,7 @@ void SchipDetectieSensor::taskLoop()
     }
 }
 
-// ============================================================================
 // HELPER FUNCTIES
-// ============================================================================
-
 bool SchipDetectieSensor::CheckSchip()
 {
     int level = gpio_get_level(static_cast<gpio_num_t>(mPinAanwezig));

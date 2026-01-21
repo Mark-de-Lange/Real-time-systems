@@ -181,10 +181,9 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
         return; // ALLES blokkeren zolang NOODSTOP actief is
     }
 
-    // ===================== NORMALE STATE MACHINE =====================
+    // NORMALE STATE MACHINE
     switch (msg.type)
     {
-        // ---------------------------------------------------------------------
     case BridgeEventType::SCHIP_GEDETECTEERD: {
         // Eerst controleren of schip niet te breed is
         if (msg.schipBreedte > mMaximaleBreedte)// NIET toevoegen aan wachtrij
@@ -214,8 +213,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
     }
     break;
 
-
-        // ---------------------------------------------------------------------
         case BridgeEventType::SCHIP_AFGEMELD:
             if (!mSchipQueue.empty())
             {
@@ -230,7 +227,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             updateBrugEnStoplichten();
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::VERKEERSLICHT_ROOD:
             if (mState == State::WACHT_OP_VERKEERSLICHT_ROOD)
             {
@@ -244,7 +240,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             }
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::SLAGBOOM_DICHT:
             if (mState == State::WACHT_OP_SLAGBOOM_DICHT)
             {
@@ -258,7 +253,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             }
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::BRUG_OPEN:
             if (mState == State::WACHT_OP_BRUG_OPEN)
             {
@@ -272,7 +266,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             }
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::BRUG_DICHT:
             if (mState == State::WACHT_OP_BRUG_DICHT)
             {
@@ -286,7 +279,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             }
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::SLAGBOOM_OPEN:
             if (mState == State::WACHT_OP_SLAGBOOM_OPEN)
             {
@@ -303,7 +295,6 @@ void Ophaalbrug::onEvent(const BridgeEventMsg& msg)
             }
             break;
 
-        // ---------------------------------------------------------------------
         case BridgeEventType::NOODSTOP:
             noodstop();
             break;

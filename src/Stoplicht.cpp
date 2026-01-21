@@ -11,7 +11,7 @@ Stoplicht::Stoplicht()
 void Stoplicht::SetDoorlaat(bool state)
 {
     if (mDoorlaat == state)
-        return; // geen verandering → geen notify
+        return;
 
     mDoorlaat = state;
 
@@ -22,7 +22,7 @@ void Stoplicht::SetDoorlaat(bool state)
 void Stoplicht::SetTegenhouden(bool state)
 {
     if (mTegenhouden == state)
-        return; // geen verandering → geen notify
+        return;
 
     mTegenhouden = state;
 
